@@ -1,0 +1,18 @@
+# Clone repository
+git clone https://github.com/Gullumama/aiops-rsi.git
+cd aiops-rsi
+
+# Local Development
+docker-compose up -d
+
+# Wait for services to start
+sleep 30
+
+# Access Dashboard
+open http://localhost:3000
+
+# Check API Health
+curl http://localhost:8080/health
+
+# Check Incidents
+curl http://localhost:8080/incidents

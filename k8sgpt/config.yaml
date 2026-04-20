@@ -1,0 +1,61 @@
+# K8sGPT Configuration File
+
+# Backend configuration
+backend: ollama
+baseURL: "http://ollama.aiops:11434"
+
+# Model configuration
+model: "llama3:8b-instruct-q4_0"
+temperature: 0.7
+maxTokens: 500
+topP: 0.9
+
+# Server configuration
+port: 8080
+logLevel: info
+logFormat: json
+
+# Cache configuration
+cache:
+  enabled: true
+  ttl: 3600  # 1 hour
+  maxSize: 1000
+
+# Analysis filters
+filters:
+  - Pod
+  - Deployment
+  - StatefulSet
+  - DaemonSet
+  - Job
+  - CronJob
+  - Service
+  - Ingress
+  - Node
+  - PersistentVolume
+  - PersistentVolumeClaim
+  - NetworkPolicy
+  - ConfigMap
+  - Secret
+
+# Resource limits
+limits:
+  maxPodsPerAnalysis: 100
+  maxEventsPerAnalysis: 50
+  maxLogsLines: 500
+
+# Security
+security:
+  enableAuth: false
+  apiKey: ""
+
+# Telemetry
+telemetry:
+  enabled: false
+  endpoint: ""
+
+# Timeout settings (in seconds)
+timeout:
+  analysis: 60
+  kubeApi: 30
+  llm: 120

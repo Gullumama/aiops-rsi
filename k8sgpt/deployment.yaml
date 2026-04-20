@@ -1,0 +1,282 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: k8sgpt
+  namespace: aiops
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: k8sgpt
+rules:
+# Core API
+- apiGroups: [""]
+  resources:
+    - pods
+    - pods/log
+    - pods/status
+    - events
+    - services
+    - endpoints
+    - nodes
+    - persistentvolumes
+    - persistentvolumeclaims
+  verbs: ["get", "list", "watch"]
+
+# Apps API
+- apiGroups: ["apps"]
+  resources:
+    - deployments
+    - statefulsets
+    - daemonsets
+    - replicasets
+  verbs: ["get", "list", "watch"]
+
+# Batch API
+- apiGroups: ["batch"]
+  resources:
+    - jobs
+    - cronjobs
+  verbs: ["get", "list", "watch"]
+
+# Metrics API
+- apiGroups: ["metrics.k8s.io"]
+  resources:
+    - pods
+    - nodes
+  verbs: ["get", "list"]
+
+# Storage API
+- apiGroups: ["storage.k8s.io"]
+  resources:
+    - storageclasses
+    - volumeattachments
+  verbs: ["get", "list"]
+
+# Networking API
+- apiGroups: ["networking.k8s.io"]
+  resources:
+    - networkpolicies
+    - ingresses
+  verbs: ["get", "list", "watch"]
+
+# RBAC
+- apiGroups: ["rbac.authorization.k8s.io"]
+  resources:
+    - roles
+    - rolebindings
+    - clusterroles
+    - clusterrolebindings
+  verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: k8sgpt
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: k8sgpt
+subjects:
+- kind: ServiceAccount
+  name: k8sgpt
+  namespace: aiops
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k8sgpt-config
+  namespace: aiops
+data:
+  config.yaml: |
+    # K8sGPT Configuration
+    backend: ollama
+    model: llama3:8b-instruct-q4_0
+    temperature: 0.7
+    maxTokens: 500
+    
+    # Cache settings
+    cacheEnabled: true
+    cacheTTL: 3600
+    
+    # Logging
+    logLevel: info
+    logFormat: json
+    
+    # Filters
+    filters:
+      - "Pod"
+      - "Deployment"
+      - "StatefulSet"
+      - "DaemonSet"
+      - "Job"
+      - "Service"
+      - "Node"
+      - "PersistentVolume"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: k8sgpt
+  namespace: aiops
+  labels:
+    app: k8sgpt
+    version: v0.3.0
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: k8sgpt
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: k8sgpt
+        version: v0.3.0
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+    spec:
+      serviceAccountName: k8sgpt
+      
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      
+      containers:
+      - name: k8sgpt
+        image: k8sgpt:latest
+        imagePullPolicy: IfNotPresent
+        
+        command:
+          - k8sgpt
+          - serve
+          - --backend=ollama
+          - --model=llama3:8b-instruct-q4_0
+          - --port=8080
+        
+        ports:
+        - name: http
+          containerPort: 8080
+          protocol: TCP
+        
+        env:
+        - name: OLLAMA_URL
+          value: "http://ollama.aiops:11434"
+        
+        - name: OLLAMA_MODEL
+          value: "llama3:8b-instruct-q4_0"
+        
+        - name: LOG_LEVEL
+          value: "info"
+        
+        - name: CACHE_ENABLED
+          value: "true"
+        
+        - name: CACHE_TTL
+          value: "3600"
+        
+        - name: MAX_TOKENS
+          value: "500"
+        
+        - name: TEMPERATURE
+          value: "0.7"
+        
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 2
+        
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          runAsNonRoot: true
+          runAsUser: 1000
+          capabilities:
+            drop:
+            - ALL
+        
+        volumeMounts:
+        - name: config
+          mountPath: /etc/k8sgpt
+          readOnly: true
+        - name: cache
+          mountPath: /tmp/k8sgpt-cache
+        - name: home
+          mountPath: /home/k8sgpt
+      
+      volumes:
+      - name: config
+        configMap:
+          name: k8sgpt-config
+      
+      - name: cache
+        emptyDir:
+          sizeLimit: 500Mi
+      
+      - name: home
+        emptyDir:
+          sizeLimit: 100Mi
+      
+      terminationGracePeriodSeconds: 30
+      dnsPolicy: ClusterFirst
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: k8sgpt
+  namespace: aiops
+  labels:
+    app: k8sgpt
+spec:
+  type: ClusterIP
+  selector:
+    app: k8sgpt
+  ports:
+  - name: http
+    port: 8080
+    targetPort: http
+    protocol: TCP
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: k8sgpt-pdb
+  namespace: aiops
+spec:
+  minAvailable: 0
+  selector:
+    matchLabels:
+      app: k8sgpt

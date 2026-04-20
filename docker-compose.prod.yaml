@@ -1,0 +1,126 @@
+version: '3.8'
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: aiops-ollama
+    ports:
+      - "11434:11434"
+    environment:
+      - OLLAMA_MODELS=/root/.ollama/models
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - aiops
+    restart: unless-stopped
+
+  k8sgpt:
+    build:
+      context: .
+      dockerfile: k8sgpt/Dockerfile
+    container_name: aiops-k8sgpt
+    ports:
+      - "8081:8080"
+    environment:
+      - OLLAMA_URL=http://ollama:11434
+      - OLLAMA_MODEL=llama3:8b-instruct-q4_0
+      - LOG_LEVEL=info
+    depends_on:
+      ollama:
+        condition: service_healthy
+    command: 
+      - serve
+      - --backend=ollama
+      - --model=llama3:8b-instruct-q4_0
+      - --port=8080
+    networks:
+      - aiops
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  loki:
+    image: grafana/loki:latest
+    container_name: aiops-loki
+    ports:
+      - "3100:3100"
+    volumes:
+      - loki_data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    networks:
+      - aiops
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: aiops-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    networks:
+      - aiops
+    restart: unless-stopped
+
+  aiops-agent:
+    build:
+      context: .
+      dockerfile: aiops-agent/Dockerfile
+    container_name: aiops-agent
+    ports:
+      - "8080:8080"
+    environment:
+      - OLLAMA_URL=http://ollama:11434
+      - OLLAMA_MODEL=llama3:8b-instruct-q4_0
+      - LOKI_URL=http://loki:3100
+      - PROMETHEUS_URL=http://prometheus:9090
+      - LOG_LEVEL=INFO
+    depends_on:
+      ollama:
+        condition: service_healthy
+      k8sgpt:
+        condition: service_healthy
+    networks:
+      - aiops
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+
+  # 🎨 React Dashboard UI
+  aiops-ui:
+    build:
+      context: ./ui
+      dockerfile: Dockerfile
+    container_name: aiops-ui
+    ports:
+      - "3000:3000"
+    environment:
+      - REACT_APP_API_URL=http://localhost:8080
+      - REACT_APP_WS_URL=ws://localhost:8080
+      - REACT_APP_K8SGPT_URL=http://localhost:8081
+      - REACT_APP_ENV=production
+    depends_on:
+      - aiops-agent
+    networks:
+      - aiops
+    restart: unless-stopped
+
+volumes:
+  ollama_data:
+  loki_data:
+  prometheus_data:
+
+networks:
+  aiops:
+    driver: bridge

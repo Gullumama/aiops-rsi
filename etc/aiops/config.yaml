@@ -1,0 +1,6 @@
+ollama_url: "http://ollama.default:11434"
+ollama_model: "llama3:8b-instruct-q4_0"
+loki_url: "http://loki.monitoring:3100"
+prometheus_url: "http://prometheus.monitoring:9090"
+enable_auto_remediation: true
+cluster_name: "production"

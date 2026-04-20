@@ -1,0 +1,182 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aiops-agent
+  namespace: aiops
+  labels:
+    app: aiops-agent
+    version: v2.0.0
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: aiops-agent
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: aiops-agent
+        version: v2.0.0
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: aiops-agent
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 2000
+      
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - aiops-agent
+              topologyKey: kubernetes.io/hostname
+      
+      containers:
+      - name: aiops-agent
+        image: aiops-agent:v2.0.0
+        imagePullPolicy: IfNotPresent
+        
+        ports:
+        - name: http
+          containerPort: 8080
+          protocol: TCP
+        
+        env:
+        - name: CLUSTER_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: aiops-config
+              key: cluster_name
+        
+        - name: OLLAMA_URL
+          valueFrom:
+            configMapKeyRef:
+              name: aiops-config
+              key: ollama_url
+        
+        - name: OLLAMA_MODEL
+          valueFrom:
+            configMapKeyRef:
+              name: aiops-config
+              key: ollama_model
+        
+        - name: LOKI_URL
+          valueFrom:
+            configMapKeyRef:
+              name: aiops-config
+              key: loki_url
+        
+        - name: PROMETHEUS_URL
+          valueFrom:
+            configMapKeyRef:
+              name: aiops-config
+              key: prometheus_url
+        
+        - name: ENABLE_AUTO_REMEDIATION
+          valueFrom:
+            configMapKeyRef:
+              name: aiops-config
+              key: enable_auto_remediation
+        
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: aiops-config
+              key: log_level
+        
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 2
+        
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          runAsNonRoot: true
+          runAsUser: 1000
+          capabilities:
+            drop:
+            - ALL
+        
+        volumeMounts:
+        - name: incident-storage
+          mountPath: /tmp/aiops
+        - name: logs
+          mountPath: /var/log/aiops
+      
+      volumes:
+      - name: incident-storage
+        emptyDir:
+          sizeLimit: 1Gi
+      
+      - name: logs
+        emptyDir:
+          sizeLimit: 500Mi
+      
+      terminationGracePeriodSeconds: 30
+      dnsPolicy: ClusterFirst
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aiops-agent
+  namespace: aiops
+  labels:
+    app: aiops-agent
+spec:
+  type: ClusterIP
+  selector:
+    app: aiops-agent
+  ports:
+  - name: http
+    port: 8080
+    targetPort: http
+    protocol: TCP
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: aiops-agent-pdb
+  namespace: aiops
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: aiops-agent
